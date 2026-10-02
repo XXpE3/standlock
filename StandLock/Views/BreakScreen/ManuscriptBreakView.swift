@@ -14,6 +14,7 @@ struct ManuscriptBreakView: View {
     let onSkip: () -> Void
     let onEscape: () -> Void
     let onComplete: () -> Void
+    let onPostpone: () -> Void
 
     @State private var remainingSeconds: TimeInterval
     @State private var isVisible = false
@@ -27,7 +28,8 @@ struct ManuscriptBreakView: View {
          nextIntervalLabel: String? = nil,
          onSkip: @escaping () -> Void,
          onEscape: @escaping () -> Void,
-         onComplete: @escaping () -> Void) {
+         onComplete: @escaping () -> Void,
+         onPostpone: @escaping () -> Void) {
         self.level = level
         self.theme = theme
         self.totalDuration = totalDuration
@@ -41,6 +43,7 @@ struct ManuscriptBreakView: View {
         self.onSkip = onSkip
         self.onEscape = onEscape
         self.onComplete = onComplete
+        self.onPostpone = onPostpone
         self._remainingSeconds = State(initialValue: totalDuration)
     }
 
@@ -80,7 +83,8 @@ struct ManuscriptBreakView: View {
                             disciplineLevel: level,
                             escalationTier: escalationTierIndex,
                             onDismiss: onSkip,
-                            onEscape: onEscape
+                            onEscape: onEscape,
+                            onPostpone: onPostpone
                         )
                     }
                     .padding(.horizontal, 40)

@@ -30,6 +30,7 @@ final class MockDetector: ContextDetecting, @unchecked Sendable {
 @MainActor
 final class MockLocker: LockPresenting, @unchecked Sendable {
     var showOverlayCalled = false
+    var showOverlayCallCount = 0
     var dismissOverlayCalled = false
     var lastLevel: DisciplineLevel?
     var lastDuration: TimeInterval?
@@ -43,6 +44,7 @@ final class MockLocker: LockPresenting, @unchecked Sendable {
                      statistics: BreakStatistics, escalationTier: Int,
                      nextIntervalLabel: String?) {
         showOverlayCalled = true
+        showOverlayCallCount += 1
         lastLevel = level
         lastDuration = duration
         lastPreferences = preferences
@@ -1127,7 +1129,7 @@ struct BreakCoordinatorTests {
     // MARK: - System Sleep/Wake & Screen Lock/Unlock Tests
 
     @Test @MainActor
-    func systemSleepDismissesOverlayAndSkips() async {
+    func systemSleepDuringBreakCountsAsCompleted() async {
         let scheduler = MockScheduler()
         scheduler.nextBreakTimeToReturn = Date().addingTimeInterval(0.05)
         let detector = MockDetector()
@@ -1136,11 +1138,15 @@ struct BreakCoordinatorTests {
         let coordinator = BreakCoordinator(scheduler: scheduler, detector: detector, locker: locker)
         let schedule = makeSchedule(breakDuration: 5)
 
+        var completedEvents: [BreakEvent] = []
         var skippedEvents: [BreakEvent] = []
+        var scheduledEvents: [CoordinatorEvent] = []
         var lastStats: BreakStatistics?
         let listener = Task {
             for await event in coordinator.events {
+                if case .breakCompleted(let e) = event { completedEvents.append(e) }
                 if case .breakSkipped(let e) = event { skippedEvents.append(e) }
+                if case .nextBreakScheduled = event { scheduledEvents.append(event) }
                 if case .statisticsUpdated(let s) = event { lastStats = s }
             }
         }
@@ -1148,15 +1154,24 @@ struct BreakCoordinatorTests {
         coordinator.start(with: [schedule], preferences: AppPreferences())
         try? await Task.sleep(for: .milliseconds(300))
         #expect(locker.isShowing)
+        let scheduledBeforeSleep = scheduledEvents.count
 
         coordinator.handleSystemSleep()
         try? await Task.sleep(for: .milliseconds(100))
 
         #expect(locker.dismissOverlayCalled)
         #expect(!locker.isShowing)
-        #expect(skippedEvents.count == 1)
-        #expect(lastStats?.breaksSkipped == 1)
-        #expect(lastStats?.currentStreak == 0)
+        #expect(completedEvents.count == 1)
+        #expect(skippedEvents.isEmpty)
+        #expect(lastStats?.breaksCompleted == 1)
+        #expect(lastStats?.breaksSkipped == 0)
+        #expect(lastStats?.currentStreak == 1)
+        // Nothing may be armed behind a dark screen: no reschedule until wake.
+        #expect(scheduledEvents.count == scheduledBeforeSleep)
+
+        coordinator.handleSystemWake()
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(scheduledEvents.count > scheduledBeforeSleep)
 
         coordinator.stop()
         listener.cancel()
@@ -1215,7 +1230,7 @@ struct BreakCoordinatorTests {
     }
 
     @Test @MainActor
-    func screenLockDismissesOverlayAndSkips() async {
+    func screenLockDuringBreakCountsAsCompleted() async {
         let scheduler = MockScheduler()
         scheduler.nextBreakTimeToReturn = Date().addingTimeInterval(0.05)
         let detector = MockDetector()
@@ -1224,11 +1239,15 @@ struct BreakCoordinatorTests {
         let coordinator = BreakCoordinator(scheduler: scheduler, detector: detector, locker: locker)
         let schedule = makeSchedule(breakDuration: 5)
 
+        var completedEvents: [BreakEvent] = []
         var skippedEvents: [BreakEvent] = []
+        var scheduledEvents: [CoordinatorEvent] = []
         var lastStats: BreakStatistics?
         let listener = Task {
             for await event in coordinator.events {
+                if case .breakCompleted(let e) = event { completedEvents.append(e) }
                 if case .breakSkipped(let e) = event { skippedEvents.append(e) }
+                if case .nextBreakScheduled = event { scheduledEvents.append(event) }
                 if case .statisticsUpdated(let s) = event { lastStats = s }
             }
         }
@@ -1236,15 +1255,24 @@ struct BreakCoordinatorTests {
         coordinator.start(with: [schedule], preferences: AppPreferences())
         try? await Task.sleep(for: .milliseconds(300))
         #expect(locker.isShowing)
+        let scheduledBeforeLock = scheduledEvents.count
 
         coordinator.handleScreenLock()
         try? await Task.sleep(for: .milliseconds(100))
 
         #expect(locker.dismissOverlayCalled)
         #expect(!locker.isShowing)
-        #expect(skippedEvents.count == 1)
-        #expect(lastStats?.breaksSkipped == 1)
-        #expect(lastStats?.currentStreak == 0)
+        #expect(completedEvents.count == 1)
+        #expect(skippedEvents.isEmpty)
+        #expect(lastStats?.breaksCompleted == 1)
+        #expect(lastStats?.breaksSkipped == 0)
+        #expect(lastStats?.currentStreak == 1)
+        // Nothing may be armed behind a locked screen: no reschedule until unlock.
+        #expect(scheduledEvents.count == scheduledBeforeLock)
+
+        coordinator.handleScreenUnlock()
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(scheduledEvents.count > scheduledBeforeLock)
 
         coordinator.stop()
         listener.cancel()
@@ -1269,6 +1297,223 @@ struct BreakCoordinatorTests {
         #expect(!locker.dismissOverlayCalled)
 
         coordinator.stop()
+    }
+
+    // MARK: - Postpone Tests
+
+    @Test @MainActor
+    func postponeActiveBreakRefiresWithoutDoubleCounting() async {
+        let scheduler = MockScheduler()
+        scheduler.nextBreakTimeToReturn = Date().addingTimeInterval(0.05)
+        let detector = MockDetector()
+        let locker = MockLocker()
+
+        let coordinator = BreakCoordinator(scheduler: scheduler, detector: detector, locker: locker)
+        let schedule = makeSchedule(breakDuration: 5)
+
+        var startedEvents: [BreakEvent] = []
+        var lastStats: BreakStatistics?
+        let listener = Task {
+            for await event in coordinator.events {
+                if case .breakStarted(let e) = event { startedEvents.append(e) }
+                if case .statisticsUpdated(let s) = event { lastStats = s }
+            }
+        }
+
+        coordinator.start(with: [schedule], preferences: AppPreferences())
+        try? await Task.sleep(for: .milliseconds(300))
+        #expect(locker.showOverlayCallCount == 1)
+
+        coordinator.postponeActiveBreak(by: 0.05)
+        try? await Task.sleep(for: .milliseconds(300))
+
+        // The overlay re-fired with the full duration, but no slot was spent twice and
+        // no statistic moved: a postpone is neither a skip nor a completion.
+        #expect(locker.showOverlayCallCount == 2)
+        #expect(startedEvents.count == 2)
+        let statsAfterRefire = lastStats ?? BreakStatistics()
+        #expect(statsAfterRefire.breaksSkipped == 0)
+        #expect(statsAfterRefire.breaksCompleted == 0)
+
+        scheduler.nextBreakTimeToReturn = Date().addingTimeInterval(600)
+        coordinator.completeActiveBreak()
+        try? await Task.sleep(for: .milliseconds(100))
+
+        #expect(lastStats?.breaksCompleted == 1)
+        // The cycle advanced exactly once, at the original trigger -- not again on re-fire.
+        #expect(lastCycleIndex(scheduler, for: schedule) == 1)
+
+        coordinator.stop()
+        listener.cancel()
+    }
+
+    @Test @MainActor
+    func postponeWithoutActiveBreakIsNoOp() async {
+        let scheduler = MockScheduler()
+        scheduler.nextBreakTimeToReturn = Date().addingTimeInterval(60)
+        let detector = MockDetector()
+        let locker = MockLocker()
+
+        let coordinator = BreakCoordinator(scheduler: scheduler, detector: detector, locker: locker)
+        let schedule = makeSchedule()
+
+        var startedEvents: [BreakEvent] = []
+        let listener = Task {
+            for await event in coordinator.events {
+                if case .breakStarted(let e) = event { startedEvents.append(e) }
+            }
+        }
+
+        coordinator.start(with: [schedule], preferences: AppPreferences())
+        try? await Task.sleep(for: .milliseconds(50))
+
+        coordinator.postponeActiveBreak(by: 0.01)
+        try? await Task.sleep(for: .milliseconds(100))
+
+        #expect(locker.showOverlayCallCount == 0)
+        #expect(startedEvents.isEmpty)
+
+        coordinator.stop()
+        listener.cancel()
+    }
+
+    @Test @MainActor
+    func pauseDuringPostponeWindowCompletesBreak() async {
+        let scheduler = MockScheduler()
+        scheduler.nextBreakTimeToReturn = Date().addingTimeInterval(0.05)
+        let detector = MockDetector()
+        let locker = MockLocker()
+
+        let coordinator = BreakCoordinator(scheduler: scheduler, detector: detector, locker: locker)
+        let schedule = makeSchedule(breakDuration: 5)
+
+        var completedEvents: [BreakEvent] = []
+        var skippedEvents: [BreakEvent] = []
+        var scheduledEvents: [CoordinatorEvent] = []
+        var lastStats: BreakStatistics?
+        let listener = Task {
+            for await event in coordinator.events {
+                if case .breakCompleted(let e) = event { completedEvents.append(e) }
+                if case .breakSkipped(let e) = event { skippedEvents.append(e) }
+                if case .nextBreakScheduled = event { scheduledEvents.append(event) }
+                if case .statisticsUpdated(let s) = event { lastStats = s }
+            }
+        }
+
+        coordinator.start(with: [schedule], preferences: AppPreferences())
+        try? await Task.sleep(for: .milliseconds(300))
+        #expect(locker.isShowing)
+
+        coordinator.postponeActiveBreak(by: 60)
+        #expect(!locker.isShowing)
+
+        scheduler.nextBreakTimeToReturn = Date().addingTimeInterval(600)
+        coordinator.pause(for: 0.1)
+        try? await Task.sleep(for: .milliseconds(300))
+
+        // Pausing cancels the refire task; the parked break must settle as taken, not
+        // linger as a half-active break no timer will ever conclude.
+        #expect(completedEvents.count == 1)
+        #expect(skippedEvents.isEmpty)
+        #expect(lastStats?.breaksCompleted == 1)
+        #expect(lastStats?.currentStreak == 1)
+        // The auto-resume re-arms the next slot once the pause lifts.
+        #expect(scheduledEvents.count == 2)
+
+        coordinator.stop()
+        listener.cancel()
+    }
+
+    @Test @MainActor
+    func screenLockDuringPostponeWindowCountsAsCompleted() async {
+        let scheduler = MockScheduler()
+        scheduler.nextBreakTimeToReturn = Date().addingTimeInterval(0.05)
+        let detector = MockDetector()
+        let locker = MockLocker()
+
+        let coordinator = BreakCoordinator(scheduler: scheduler, detector: detector, locker: locker)
+        let schedule = makeSchedule(breakDuration: 5)
+
+        var completedEvents: [BreakEvent] = []
+        var skippedEvents: [BreakEvent] = []
+        var scheduledEvents: [CoordinatorEvent] = []
+        var lastStats: BreakStatistics?
+        let listener = Task {
+            for await event in coordinator.events {
+                if case .breakCompleted(let e) = event { completedEvents.append(e) }
+                if case .breakSkipped(let e) = event { skippedEvents.append(e) }
+                if case .nextBreakScheduled = event { scheduledEvents.append(event) }
+                if case .statisticsUpdated(let s) = event { lastStats = s }
+            }
+        }
+
+        coordinator.start(with: [schedule], preferences: AppPreferences())
+        try? await Task.sleep(for: .milliseconds(300))
+        #expect(locker.isShowing)
+
+        coordinator.postponeActiveBreak(by: 60)
+        let scheduledBeforeLock = scheduledEvents.count
+
+        scheduler.nextBreakTimeToReturn = Date().addingTimeInterval(600)
+        coordinator.handleScreenLock()
+        try? await Task.sleep(for: .milliseconds(100))
+
+        // The parked break counts as taken even though its overlay was already down.
+        #expect(completedEvents.count == 1)
+        #expect(skippedEvents.isEmpty)
+        #expect(lastStats?.breaksCompleted == 1)
+        // Nothing may be armed behind a locked screen: no reschedule until unlock.
+        #expect(scheduledEvents.count == scheduledBeforeLock)
+
+        coordinator.handleScreenUnlock()
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(scheduledEvents.count > scheduledBeforeLock)
+
+        coordinator.stop()
+        listener.cancel()
+    }
+
+    @Test @MainActor
+    func postponeWhilePausedIsRefused() async {
+        let scheduler = MockScheduler()
+        scheduler.nextBreakTimeToReturn = Date().addingTimeInterval(0.05)
+        let detector = MockDetector()
+        let locker = MockLocker()
+
+        let coordinator = BreakCoordinator(scheduler: scheduler, detector: detector, locker: locker)
+        let schedule = makeSchedule(breakDuration: 5)
+
+        var startedEvents: [BreakEvent] = []
+        var scheduledEvents: [CoordinatorEvent] = []
+        var lastStats: BreakStatistics?
+        let listener = Task {
+            for await event in coordinator.events {
+                if case .breakStarted(let e) = event { startedEvents.append(e) }
+                if case .nextBreakScheduled = event { scheduledEvents.append(event) }
+                if case .statisticsUpdated(let s) = event { lastStats = s }
+            }
+        }
+
+        coordinator.start(with: [schedule], preferences: AppPreferences())
+        try? await Task.sleep(for: .milliseconds(300))
+        #expect(locker.isShowing)
+
+        scheduler.nextBreakTimeToReturn = Date().addingTimeInterval(600)
+        coordinator.pause(for: 0.2)
+        // Paused with the overlay still up: postpone must neither kill the pause's
+        // resume task nor refire a break during the pause.
+        coordinator.postponeActiveBreak(by: 0.05)
+        try? await Task.sleep(for: .milliseconds(400))
+
+        #expect(locker.showOverlayCallCount == 1)
+        #expect(startedEvents.count == 1)
+        #expect(locker.isShowing)
+        #expect((lastStats ?? BreakStatistics()).breaksCompleted == 0)
+        // The refused postpone left the resume task alive; it re-armed the next slot.
+        #expect(scheduledEvents.count == 2)
+
+        coordinator.stop()
+        listener.cancel()
     }
 
     @Test @MainActor

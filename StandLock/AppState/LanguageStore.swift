@@ -82,10 +82,12 @@ final class LanguageStore: ObservableObject {
         string(LocalizedStringResource(String.LocalizationValue(key)))
     }
 
-    /// The language's own name for itself, e.g. `"tr"` -> "Türkçe".
+    /// The language's own name for itself, e.g. `"tr"` -> "Türkçe", `"zh-Hans"` -> "简体中文".
     func displayName(for code: String) -> String {
         let locale = Locale(identifier: code)
-        guard let name = locale.localizedString(forLanguageCode: code) else { return code }
+        let name = locale.localizedString(forIdentifier: code)
+            ?? locale.localizedString(forLanguageCode: code)
+            ?? code
         guard let first = name.first else { return code }
         return String(first).uppercased(with: locale) + name.dropFirst()
     }

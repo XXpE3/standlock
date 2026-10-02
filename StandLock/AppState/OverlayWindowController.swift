@@ -28,6 +28,7 @@ final class OverlayWindowController: LockPresenting {
     var onSkip: (() -> Void)?
     var onComplete: (() -> Void)?
     var onEscape: (() -> Void)?
+    var onPostpone: (() -> Void)?
 
     nonisolated init(languageStore: LanguageStore, themeStore: ThemeStore) {
         self.languageStore = languageStore
@@ -67,7 +68,8 @@ final class OverlayWindowController: LockPresenting {
                 nextIntervalLabel: nextIntervalLabel,
                 onSkip: { [weak self] in self?.handleSkip() },
                 onEscape: { [weak self] in self?.handleEscape() },
-                onComplete: { [weak self] in self?.handleComplete() }
+                onComplete: { [weak self] in self?.handleComplete() },
+                onPostpone: { [weak self] in self?.handlePostpone() }
             )
             window.setContent(LocalizedRoot(store: languageStore) { contentView })
             window.orderFrontRegardless()
@@ -160,6 +162,12 @@ final class OverlayWindowController: LockPresenting {
         breakStartDate = nil
         dismissOverlay()
         onEscape?()
+    }
+
+    private func handlePostpone() {
+        breakStartDate = nil
+        dismissOverlay()
+        onPostpone?()
     }
 
     private func forceFocus() {

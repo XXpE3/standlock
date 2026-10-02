@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import StandLockCore
 import Locking
+import Coordination
 
 struct ActionArea: View {
     let tier: EnforcementTier
@@ -12,6 +13,7 @@ struct ActionArea: View {
     var escalationTier: Int = 0
     let onDismiss: () -> Void
     var onEscape: (() -> Void)?
+    let onPostpone: () -> Void
 
     @EnvironmentObject private var languageStore: LanguageStore
 
@@ -63,7 +65,17 @@ struct ActionArea: View {
                 EmergencyEscapeView(palette: palette, onEscape: onEscape ?? onDismiss)
             }
         } else {
-            mechanismContent
+            VStack(spacing: 16) {
+                mechanismContent
+                // Postpone rides the same rails as skip: it appears only once the
+                // skip-delay countdown has run out, and never once the daily skip limit
+                // has removed the skip control. Strict offers no way out but the emergency
+                // key combo -- and its event tap swallows mouse clicks anyway.
+                if disciplineLevel != .strict {
+                    ButtonDismissView(label: "Postpone \(postponeSeconds) seconds \u{2192}",
+                                      tint: palette.inkFaint, onDismiss: onPostpone)
+                }
+            }
         }
     }
 
@@ -72,7 +84,8 @@ struct ActionArea: View {
         switch tier.dismissMechanism {
         case .button:
             DodgingWrapper(isActive: escalationTier >= 1) {
-                ButtonDismissView(palette: palette, onDismiss: onDismiss)
+                ButtonDismissView(label: "Skip this break \u{2192}", tint: palette.ink,
+                                  onDismiss: onDismiss)
             }
         case .typePhrase(let phrase, let requiresConfirmation):
             // A phrase the user chose themselves is shown exactly as stored. Only the
@@ -123,6 +136,10 @@ struct ActionArea: View {
             )
         }
     }
+
+    /// Shares the coordinator's default so the label can never disagree with the timer.
+    private var postponeSeconds: Int { Int(BreakCoordinator.defaultPostponeInterval) }
+
 }
 
 // MARK: - Dodging
@@ -1381,7 +1398,8 @@ private struct RoastChallengeDismissView: View {
 // MARK: - Button
 
 private struct ButtonDismissView: View {
-    let palette: BreakPalette
+    let label: LocalizedStringKey
+    let tint: Color
     let onDismiss: () -> Void
 
     @State private var isPressed = false
@@ -1389,11 +1407,11 @@ private struct ButtonDismissView: View {
     var body: some View {
         Button(action: onDismiss) {
             VStack(spacing: 4) {
-                Text("Skip this break \u{2192}")
+                Text(label)
                     .font(BreakTypography.label(size: 14, weight: .medium))
-                    .foregroundStyle(palette.ink.opacity(isPressed ? 0.7 : 1))
+                    .foregroundStyle(tint.opacity(isPressed ? 0.7 : 1))
                 Rectangle()
-                    .fill(palette.ink.opacity(isPressed ? 0.7 : 1))
+                    .fill(tint.opacity(isPressed ? 0.7 : 1))
                     .frame(height: 1)
             }
             .fixedSize()

@@ -28,4 +28,18 @@ struct LanguageResolutionTests {
     @Test func selectionWithRegionTagMatchesByLanguageCode() {
         #expect(resolveLanguage(selection: "tr-TR", available: ["en", "tr"], systemPreferred: ["en"]) == "tr")
     }
+
+    @Test func simplifiedChineseRegionMatchesHans() {
+        let available = ["en", "tr", "zh-Hans"]
+        #expect(resolveLanguage(selection: nil, available: available, systemPreferred: ["zh-Hans-CN"]) == "zh-Hans")
+        #expect(resolveLanguage(selection: nil, available: available, systemPreferred: ["zh-CN", "en"]) == "zh-Hans")
+        #expect(resolveLanguage(selection: "zh-Hans", available: available, systemPreferred: ["en"]) == "zh-Hans")
+    }
+
+    @Test func traditionalChineseDoesNotMatchHans() {
+        let available = ["en", "tr", "zh-Hans"]
+        #expect(resolveLanguage(selection: nil, available: available, systemPreferred: ["zh-Hant-TW", "en"]) == "en")
+        #expect(resolveLanguage(selection: nil, available: available, systemPreferred: ["zh-TW"]) == "en")
+        #expect(resolveLanguage(selection: "zh-Hant", available: available, systemPreferred: ["tr"]) == "tr")
+    }
 }

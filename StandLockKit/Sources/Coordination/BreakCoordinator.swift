@@ -73,6 +73,9 @@ public final class BreakCoordinator {
     /// Floor between a skip and the break it schedules, for the case where the anchored slot
     /// has already gone by.
     private static let minimumLeadTime: TimeInterval = 60
+    /// The grace before a postponed break returns. The overlay's postpone button label reads
+    /// this, so the advertised countdown and the actual timer can never drift apart.
+    public static let defaultPostponeInterval: TimeInterval = 30
 
     private let deferralPollingInterval: TimeInterval
     private let eventContinuation: AsyncStream<CoordinatorEvent>.Continuation
@@ -140,6 +143,13 @@ public final class BreakCoordinator {
         breakTimer = nil
         clearPendingBreak()
         isPaused = true
+        // A postponed break's overlay is already down and its refire task just died with
+        // `breakTimer`; settle it now so no half-active break outlives the pause. Same rule
+        // as sleep/lock: an interrupted break counts as taken. `completeBreak`'s reschedule
+        // is a no-op while paused; the resume task below re-arms the next slot.
+        if !locker.isShowing, let event = currentBreak, let schedule = currentSchedule {
+            completeBreak(event: event, schedule: schedule)
+        }
         let until = Date().addingTimeInterval(duration)
         eventContinuation.yield(.schedulePaused(until: until))
         breakTimer = Task {
@@ -221,15 +231,14 @@ public final class BreakCoordinator {
         breakTimer?.cancel()
         breakTimer = nil
         clearPendingBreak()
-        if locker.isShowing {
-            locker.dismissOverlay()
-            if let event = currentBreak {
-                eventContinuation.yield(.breakSkipped(event))
-                updateStatistics {
-                    $0.breaksSkipped += 1
-                    $0.currentStreak = 0
-                }
-            }
+        if let event = currentBreak, let schedule = currentSchedule {
+            // Sleep or lock means the user stepped away: an interrupted break counts as
+            // taken, not skipped -- including one parked in its postpone window with the
+            // overlay already down. `completeBreak`'s reschedule is a no-op while suspended
+            // (see the guard in `scheduleNextBreak`); the wake/unlock handler arms the
+            // next break once the screen is back.
+            completeBreak(event: event, schedule: schedule)
+        } else {
             currentBreak = nil
             currentSchedule = nil
         }
@@ -283,6 +292,33 @@ public final class BreakCoordinator {
         currentBreak = nil
         currentSchedule = nil
         scheduleNextBreak()
+    }
+
+    /// Dismisses the overlay and re-fires the same break after `interval`, without consuming
+    /// another slot: the cycle index and daily count were already spent when the break first
+    /// triggered, and a postpone spends nothing again. Records no statistic and leaves the
+    /// escalation tier and streak untouched. Refused while paused: the pause's resume task
+    /// owns `breakTimer` by then, and no break may fire on a schedule the user paused.
+    public func postponeActiveBreak(by interval: TimeInterval = BreakCoordinator.defaultPostponeInterval) {
+        guard !isPaused, let event = currentBreak, let schedule = currentSchedule else { return }
+        locker.dismissOverlay()
+        breakTimer?.cancel()
+        breakTimer = Task {
+            try? await Task.sleep(for: .seconds(interval))
+            guard !Task.isCancelled else { return }
+            self.refirePostponedBreak(event: event, schedule: schedule)
+        }
+    }
+
+    private func refirePostponedBreak(event: BreakEvent, schedule: Schedule) {
+        // `breakStarted` again so the menu bar restarts its remaining-time display from the
+        // full duration, matching the overlay's countdown. Statistics are unaffected: they
+        // only move through `updateStatistics`.
+        eventContinuation.yield(.breakStarted(event))
+        locker.showOverlay(level: event.level, duration: event.duration,
+                           exercise: exercises.randomElement(), preferences: preferences,
+                           statistics: statistics, escalationTier: currentTier(for: schedule),
+                           nextIntervalLabel: nextIntervalLabel(for: schedule))
     }
 
     public func completeActiveBreak() {
@@ -341,6 +377,7 @@ public final class BreakCoordinator {
         breakTimer = nil
         rolloverIfNeeded(now: now)
         guard !isPaused else { return }
+        guard !isSuspended else { return }
 
         var earliest: (date: Date, schedule: Schedule)?
         // The carried slot competes with the freshly computed ones instead of overriding them,
