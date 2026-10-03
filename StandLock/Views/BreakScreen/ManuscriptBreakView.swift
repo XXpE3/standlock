@@ -15,6 +15,7 @@ struct ManuscriptBreakView: View {
     let onEscape: () -> Void
     let onComplete: () -> Void
     let onPostpone: () -> Void
+    var graceOfferDeadline: Date? = nil
 
     @State private var remainingSeconds: TimeInterval
     @State private var isVisible = false
@@ -29,7 +30,8 @@ struct ManuscriptBreakView: View {
          onSkip: @escaping () -> Void,
          onEscape: @escaping () -> Void,
          onComplete: @escaping () -> Void,
-         onPostpone: @escaping () -> Void) {
+         onPostpone: @escaping () -> Void,
+         graceOfferDeadline: Date? = nil) {
         self.level = level
         self.theme = theme
         self.totalDuration = totalDuration
@@ -44,6 +46,7 @@ struct ManuscriptBreakView: View {
         self.onEscape = onEscape
         self.onComplete = onComplete
         self.onPostpone = onPostpone
+        self.graceOfferDeadline = graceOfferDeadline
         self._remainingSeconds = State(initialValue: totalDuration)
     }
 
@@ -84,7 +87,8 @@ struct ManuscriptBreakView: View {
                             escalationTier: escalationTierIndex,
                             onDismiss: onSkip,
                             onEscape: onEscape,
-                            onPostpone: onPostpone
+                            onPostpone: onPostpone,
+                            graceOfferDeadline: graceOfferDeadline
                         )
                     }
                     .padding(.horizontal, 40)

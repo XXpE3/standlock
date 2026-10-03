@@ -22,6 +22,8 @@ final class OverlayWindowController: LockPresenting {
     private var currentEscalationTier: Int = 0
     private var currentNextIntervalLabel: String?
     private var breakStartDate: Date?
+    private var graceOfferDeadline: Date?
+    private var mediaPauseTimer: Timer?
     private var lastScreenChangeHandled: Date = .distantPast
     private var policyBeforeOverlay: NSApplication.ActivationPolicy = .accessory
 
@@ -39,7 +41,8 @@ final class OverlayWindowController: LockPresenting {
         level: DisciplineLevel, duration: TimeInterval,
         exercise: Exercise?, preferences: AppPreferences,
         statistics: BreakStatistics, escalationTier: Int = 0,
-        nextIntervalLabel: String? = nil
+        nextIntervalLabel: String? = nil,
+        graceOfferDeadline: Date? = nil
     ) {
         let isRecreation = isShowing
         dismissOverlay()
@@ -54,6 +57,7 @@ final class OverlayWindowController: LockPresenting {
         currentStatistics = statistics
         currentEscalationTier = escalationTier
         currentNextIntervalLabel = nextIntervalLabel
+        self.graceOfferDeadline = graceOfferDeadline
 
         // Read once per overlay. That is what makes each break pick up the current
         // appearance without this controller subscribing to the store.
@@ -69,7 +73,8 @@ final class OverlayWindowController: LockPresenting {
                 onSkip: { [weak self] in self?.handleSkip() },
                 onEscape: { [weak self] in self?.handleEscape() },
                 onComplete: { [weak self] in self?.handleComplete() },
-                onPostpone: { [weak self] in self?.handlePostpone() }
+                onPostpone: { [weak self] in self?.handlePostpone() },
+                graceOfferDeadline: graceOfferDeadline
             )
             window.setContent(LocalizedRoot(store: languageStore) { contentView })
             window.orderFrontRegardless()
@@ -97,8 +102,30 @@ final class OverlayWindowController: LockPresenting {
         observeScreenChanges()
 
         if preferences.pauseMediaDuringBreak {
-            mediaController.pause()
+            scheduleMediaPause(graceOfferDeadline: graceOfferDeadline)
         }
+    }
+
+    /// Media pauses only once the lock is formal. During the opening grace the user is still
+    /// finishing something, so a postpone never has to undo a pause that should not have happened.
+    private func scheduleMediaPause(graceOfferDeadline: Date?) {
+        mediaPauseTimer?.invalidate()
+        mediaPauseTimer = nil
+        guard let deadline = graceOfferDeadline, deadline > Date() else {
+            mediaController.pause()
+            return
+        }
+        let delay = deadline.timeIntervalSinceNow
+        let timer = Timer(timeInterval: max(0, delay), repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.isShowing else { return }
+                self.mediaController.pause()
+            }
+        }
+        // `.common` so a mouse-tracking loop on the overlay cannot hold the pause past the
+        // moment the lock becomes formal.
+        RunLoop.main.add(timer, forMode: .common)
+        mediaPauseTimer = timer
     }
 
     func dismissOverlay() {
@@ -109,6 +136,8 @@ final class OverlayWindowController: LockPresenting {
         }
         focusTimer?.invalidate()
         focusTimer = nil
+        mediaPauseTimer?.invalidate()
+        mediaPauseTimer = nil
         eventTapController?.stop()
         eventTapController = nil
 
@@ -165,8 +194,9 @@ final class OverlayWindowController: LockPresenting {
     }
 
     private func handlePostpone() {
-        breakStartDate = nil
-        dismissOverlay()
+        // The coordinator dismisses on acceptance. Dismissing here first drops the overlay
+        // when postpone is refused -- the offer window just closed, or the schedule is paused --
+        // and leaves a break that is active with nothing on screen.
         onPostpone?()
     }
 
@@ -217,12 +247,14 @@ final class OverlayWindowController: LockPresenting {
         let tier = currentEscalationTier
         let exercise = currentExercise
         let nextLabel = currentNextIntervalLabel
+        let deadline = graceOfferDeadline
         dismissOverlay()
         showOverlay(
             level: level, duration: remaining,
             exercise: exercise, preferences: prefs,
             statistics: stats, escalationTier: tier,
-            nextIntervalLabel: nextLabel
+            nextIntervalLabel: nextLabel,
+            graceOfferDeadline: deadline
         )
     }
 }

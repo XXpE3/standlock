@@ -27,6 +27,20 @@ struct QuickActionsView: View {
                 .buttonStyle(MenuBarRowStyle())
             } else {
                 Button {
+                    coordinator.startBreakNow()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "figure.stand")
+                            .frame(width: 18)
+                            .foregroundStyle(.secondary)
+                        Text("Break Now")
+                        Spacer()
+                    }
+                }
+                .buttonStyle(MenuBarRowStyle())
+                .disabled(coordinator.schedules.isEmpty || coordinator.isBreakActive)
+
+                Button {
                     coordinator.skipNextBreak()
                 } label: {
                     HStack(spacing: 8) {

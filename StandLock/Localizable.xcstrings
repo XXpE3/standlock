@@ -897,6 +897,22 @@
         }
       }
     },
+    "Break Now" : {
+      "localizations" : {
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Şimdi Mola"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "现在休息"
+          }
+        }
+      }
+    },
     "Break Statistics" : {
       "localizations" : {
         "tr" : {
@@ -4234,6 +4250,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "立即重新启动"
+          }
+        }
+      }
+    },
+    "Returns %@" : {
+      "localizations" : {
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ sonra döner"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将于 %@ 回来"
           }
         }
       }

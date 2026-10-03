@@ -66,6 +66,15 @@ struct MenuBarView: View {
             }
             .font(.caption)
             .foregroundStyle(.secondary)
+        } else if let until = coordinator.graceUntil {
+            VStack(alignment: .leading, spacing: 2) {
+                Label("Break waiting", systemImage: "pause.circle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                Text("Returns \(until, style: .relative)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         } else if let reason = coordinator.deferralReason {
             VStack(alignment: .leading, spacing: 2) {
                 Label("Break waiting", systemImage: "pause.circle")

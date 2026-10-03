@@ -1,6 +1,8 @@
 # Xcode
 build/
 DerivedData/
+# Xcode explicit-modules build cache that shows up inside the project bundle
+*.xcodeproj/-Xcc/
 *.xcodeproj/project.xcworkspace/xcuserdata/
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/

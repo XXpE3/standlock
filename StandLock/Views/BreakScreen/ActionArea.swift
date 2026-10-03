@@ -14,23 +14,32 @@ struct ActionArea: View {
     let onDismiss: () -> Void
     var onEscape: (() -> Void)?
     let onPostpone: () -> Void
+    var graceOfferDeadline: Date? = nil
 
     @EnvironmentObject private var languageStore: LanguageStore
 
     @State private var showAction = false
     @State private var countdown: Int = 0
+    @State private var graceStillOffered = false
 
     var body: some View {
-        Group {
-            if tier.skipDelay == 0 {
-                mechanismView
-            } else if showAction {
-                mechanismView
-            } else {
-                countdownLabel
+        VStack(spacing: 16) {
+            if graceStillOffered {
+                ButtonDismissView(label: "Postpone \(postponeSeconds) seconds \u{2192}",
+                                  tint: palette.inkFaint, onDismiss: onPostpone)
+            }
+            Group {
+                if tier.skipDelay == 0 {
+                    mechanismView
+                } else if showAction {
+                    mechanismView
+                } else {
+                    countdownLabel
+                }
             }
         }
         .animation(.easeOut(duration: 0.3), value: showAction)
+        .animation(.easeOut(duration: 0.3), value: graceStillOffered)
         .task {
             let delay = Int(tier.skipDelay)
             guard delay > 0 else {
@@ -44,6 +53,21 @@ struct ActionArea: View {
                 countdown -= 1
             }
             showAction = true
+        }
+        .task(id: graceOfferDeadline) {
+            guard disciplineLevel != .strict, let deadline = graceOfferDeadline else {
+                graceStillOffered = false
+                return
+            }
+            let remaining = deadline.timeIntervalSinceNow
+            guard remaining > 0 else {
+                graceStillOffered = false
+                return
+            }
+            graceStillOffered = true
+            try? await Task.sleep(for: .seconds(remaining))
+            guard !Task.isCancelled else { return }
+            graceStillOffered = false
         }
     }
 
@@ -65,17 +89,7 @@ struct ActionArea: View {
                 EmergencyEscapeView(palette: palette, onEscape: onEscape ?? onDismiss)
             }
         } else {
-            VStack(spacing: 16) {
-                mechanismContent
-                // Postpone rides the same rails as skip: it appears only once the
-                // skip-delay countdown has run out, and never once the daily skip limit
-                // has removed the skip control. Strict offers no way out but the emergency
-                // key combo -- and its event tap swallows mouse clicks anyway.
-                if disciplineLevel != .strict {
-                    ButtonDismissView(label: "Postpone \(postponeSeconds) seconds \u{2192}",
-                                      tint: palette.inkFaint, onDismiss: onPostpone)
-                }
-            }
+            mechanismContent
         }
     }
 

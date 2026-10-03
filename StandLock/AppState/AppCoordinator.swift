@@ -35,6 +35,7 @@ final class AppCoordinator: ObservableObject {
     @Published var currentLevel: DisciplineLevel = .gentle
     @Published var todayStats: BreakStatistics = BreakStatistics()
     @Published var deferralReason: DeferralReason?
+    @Published private(set) var graceUntil: Date?
     @Published var isPaused: Bool = false
     @Published var pausedUntil: Date?
     @Published var schedules: [Schedule] = []
@@ -362,6 +363,7 @@ final class AppCoordinator: ObservableObject {
         currentBreakRemaining = 0
         breakProgress = 0
         menuBarTimerText = nil
+        graceUntil = nil
     }
 
     private func carriedStateForToday() -> EnforcementState {
@@ -404,6 +406,7 @@ final class AppCoordinator: ObservableObject {
         switch event {
         case .nextBreakScheduled(let date):
             deferralReason = nil
+            graceUntil = nil
             // Not always `Date()`: a rebuilt coordinator re-arms the slot it inherited, and
             // re-anchoring on that collapses the interval the ring measures to whatever is left
             // of it -- editing a schedule twenty seconds before a break emptied the menu bar
@@ -423,20 +426,34 @@ final class AppCoordinator: ObservableObject {
 
         case .breakStarted(let e):
             deferralReason = nil
+            graceUntil = nil
             isBreakActive = true
             currentBreakRemaining = e.duration
             currentLevel = e.level
             breakProgress = 1.0
 
         case .breakCompleted, .breakSkipped, .breakEscaped:
+            graceUntil = nil
             clearActiveBreakState()
 
         case .breakDeferred(let reason, _):
+            graceUntil = nil
             deferralReason = reason
+
+        case .breakGrace(let until):
+            deferralReason = nil
+            isBreakActive = false
+            currentBreakRemaining = 0
+            breakProgress = 0
+            graceUntil = until
+            nextBreakTime = nil
+            breakScheduledAt = nil
+            updateMenuBarTimer()
 
         case .schedulePaused(let until):
             isPaused = true
             pausedUntil = until
+            graceUntil = nil
             menuBarTimerText = nil
 
         case .scheduleResumed:
@@ -477,6 +494,10 @@ final class AppCoordinator: ObservableObject {
 
     func skipNextBreak() {
         coordinator?.skipNextBreak()
+    }
+
+    func startBreakNow() {
+        coordinator?.startBreakNow()
     }
 
     func pauseSchedule(for duration: TimeInterval) {
