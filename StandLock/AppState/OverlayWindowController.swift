@@ -23,7 +23,6 @@ final class OverlayWindowController: LockPresenting {
     private var currentNextIntervalLabel: String?
     private var breakStartDate: Date?
     private var graceOfferDeadline: Date?
-    private var mediaPauseTimer: Timer?
     private var lastScreenChangeHandled: Date = .distantPast
     private var policyBeforeOverlay: NSApplication.ActivationPolicy = .accessory
 
@@ -101,31 +100,14 @@ final class OverlayWindowController: LockPresenting {
 
         observeScreenChanges()
 
+        // Pause as soon as the overlay is up, including during the opening grace.
+        // Grace only keeps the postpone control available; the lock people actually
+        // sit through is one they are not postponing. Nothing here resumes playback,
+        // so a postpone taken in that window leaves audio paused for the postpone
+        // and until the user starts it again.
         if preferences.pauseMediaDuringBreak {
-            scheduleMediaPause(graceOfferDeadline: graceOfferDeadline)
-        }
-    }
-
-    /// Media pauses only once the lock is formal. During the opening grace the user is still
-    /// finishing something, so a postpone never has to undo a pause that should not have happened.
-    private func scheduleMediaPause(graceOfferDeadline: Date?) {
-        mediaPauseTimer?.invalidate()
-        mediaPauseTimer = nil
-        guard let deadline = graceOfferDeadline, deadline > Date() else {
             mediaController.pause()
-            return
         }
-        let delay = deadline.timeIntervalSinceNow
-        let timer = Timer(timeInterval: max(0, delay), repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, self.isShowing else { return }
-                self.mediaController.pause()
-            }
-        }
-        // `.common` so a mouse-tracking loop on the overlay cannot hold the pause past the
-        // moment the lock becomes formal.
-        RunLoop.main.add(timer, forMode: .common)
-        mediaPauseTimer = timer
     }
 
     func dismissOverlay() {
@@ -136,8 +118,6 @@ final class OverlayWindowController: LockPresenting {
         }
         focusTimer?.invalidate()
         focusTimer = nil
-        mediaPauseTimer?.invalidate()
-        mediaPauseTimer = nil
         eventTapController?.stop()
         eventTapController = nil
 
